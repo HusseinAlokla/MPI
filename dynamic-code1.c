@@ -44,16 +44,63 @@ int main(int argc, char **argv)
 
     // Compute the Mandelbrot set for the local portion
     double comp_start_time = MPI_Wtime();
-    for (int y = rank * rows_per_process; y < (rank + 1) * rows_per_process; y++)
+    int current_row = rank * rows_per_process;
+    int completed_rows = 0;
+
+    while (completed_rows < rows_per_process)
     {
+        if (current_row >= (rank + 1) * rows_per_process)
+        {
+            // All rows for this process are completed
+            break;
+        }
+
         for (int x = 0; x < WIDTH; x++)
         {
             double real = (x - WIDTH / 2.0) * 4.0 / WIDTH;
-            double imag = (y - HEIGHT / 2.0) * 4.0 / HEIGHT;
+            double imag = (current_row - HEIGHT / 2.0) * 4.0 / HEIGHT;
             int value = mandelbrot(real, imag);
-            local_image[(y - rank * rows_per_process) * WIDTH + x] = (unsigned char)(value % 256);
+            local_image[(current_row - rank * rows_per_process) * WIDTH + x] = (unsigned char)(value % 256);
+        }
+
+        current_row++;
+        completed_rows++;
+
+        // Check for available work from other processes
+        int next_row = current_row % HEIGHT;
+        MPI_Status status;
+        int work_available = 0;
+
+        // Ask other processes if they have work
+        for (int i = 0; i < size; i++)
+        {
+            if (i != rank)
+            {
+                MPI_Send(&next_row, 1, MPI_INT, i, 0, MPI_COMM_WORLD);
+            }
+        }
+
+        // Check if any other process has work
+        for (int i = 0; i < size; i++)
+        {
+            if (i != rank)
+            {
+                int has_work;
+                MPI_Recv(&has_work, 1, MPI_INT, i, 0, MPI_COMM_WORLD, &status);
+                if (has_work)
+                {
+                    work_available = 1;
+                    break;
+                }
+            }
+        }
+
+        if (!work_available)
+        {
+            break;
         }
     }
+
     double comp_end_time = MPI_Wtime();
     double comp_time = comp_end_time - comp_start_time;
     // Gather local images to the root process
